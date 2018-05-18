@@ -20,7 +20,7 @@ function doConversion(str)
 
 function postToServer(postContent, hookid, matterUrl) {
     console.log("Informing mattermost channel: " + hookid);
-    process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+    process.env.NODE_TLS_REJECT_UNAUTHORIZED = "1";
 
     var agent, httpsagent, httpagent = null;
     var https_proxy = process.env.HTTPS_PROXY || process.env.https_proxy;
@@ -69,6 +69,7 @@ function postToServer(postContent, hookid, matterUrl) {
         }
     }
     console.log(matterServer + "-" + matterServerPort  + "-" + matterProto);
+
     var proto;
     if(matterProto == 'https')
     {
@@ -83,9 +84,19 @@ function postToServer(postContent, hookid, matterUrl) {
         agent = httpagent;
     }
 
-    var postData = '{"text": ' + JSON.stringify(postContent) + ', "username": "' + matterUsername + '", "icon_url": "' + matterIconUrl + '"}';
-    console.log(postData);
-    
+    var postData;
+    try {
+        postData = JSON.stringify({
+            "text": JSON.parse(postContent),
+            "username": matterUsername,
+            "icon_url": matterIconUrl
+        });
+    } catch(e) {
+        console.log("Malformed postContent - " + e);
+        return;
+    }
+
+
     var post_options = {
         host: matterServer,
         port: matterServerPort,
@@ -97,8 +108,6 @@ function postToServer(postContent, hookid, matterUrl) {
             'Content-Length': Buffer.byteLength(postData)
         }
     };
-    
-    console.log(post_options);
 
     try
     {
@@ -164,15 +173,15 @@ router.post('/hooks/:hookid', function(req, res, next) {
 
     var postContent;
 
-    if (webevent == "jira:issue_updated") 
+    if (webevent == "jira:issue_updated")
     {
         postContent = "##### " + displayName + " updated [" + issueID + "](" + issueUrl + "): " + summary;
     }
-    else if(webevent == "jira:issue_created") 
+    else if(webevent == "jira:issue_created")
     {
         postContent = "##### " + displayName + " created [" + issueID + "](" + issueUrl + "): " + summary;
     }
-    else if(webevent == "jira:issue_deleted") 
+    else if(webevent == "jira:issue_deleted")
     {
         postContent = "##### " + displayName + " deleted [" + issueID + "](" + issueUrl + "): " + summary;
     }
