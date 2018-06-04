@@ -13,9 +13,48 @@ function toTitleCase(str) {
     });
 }
 
-function doConversion(str)
-{
-    return toMarkdown(str);
+function summarizeString(str, length) {
+    var out = str;
+    if (str.length > length) {
+        out = str.slice(0,length) + "\\[..\\]";
+    }
+
+    return out;
+}
+
+function toTable(items) {
+    const toTableEntry = (fieldName, fieldValue) =>
+        "| " + toTitleCase(toMarkdown(fieldName)) + " | " + toMarkdown(fieldValue) + " |";
+
+    var tableData = items.map(item => {
+        var fieldName = item.field;
+        var fieldValue = item.toString();
+        if (fieldValue) {
+            fieldValue = summarizeString(fieldValue, 20);
+        }
+        if(!fieldValue){
+            fieldValue = "-Cleared-";
+        }
+        return toTableEntry(fieldName, fieldValue);
+    });
+
+    tableData.unshift("| Field | Updated Value |\r\n|:----- |:-------------|");
+
+    return tableData.join("\r\n");
+}
+
+function summarizeIssue(issue) {
+    let fields = issue.fields;
+    let issuetype = fields.issuetype;
+    let name = issuetype.name;
+
+    var desc = fields.description || "";
+    desc = summarizeString(desc, 140);
+    if (desc.length > 0) {
+        desc = "\r\n\r\n" + desc;
+    }
+
+    return `Type: __${name}__${desc}`;
 }
 
 function postToServer(postContent, hookid, matterUrl) {
@@ -84,10 +123,13 @@ function postToServer(postContent, hookid, matterUrl) {
         agent = httpagent;
     }
 
+    console.log("POST DATA");
+    console.log(postData);
+
     var postData;
     try {
         postData = JSON.stringify({
-            "text": JSON.parse(postContent),
+            "text": postContent,
             "username": matterUsername,
             "icon_url": matterIconUrl
         });
@@ -95,7 +137,6 @@ function postToServer(postContent, hookid, matterUrl) {
         console.log("Malformed postContent - " + e);
         return;
     }
-
 
     var post_options = {
         host: matterServer,
@@ -134,56 +175,66 @@ function postToServer(postContent, hookid, matterUrl) {
 
 router.get('/', function(req, res, next) {
     res.render('index', {
-        title: 'JIRA Mattermost Bridge'
+        title: ''
     });
 });
 
 router.get('/hooks/:hookid', function(req, res, next) {
     res.render('index', {
-        title: 'JIRA Mattermost Bridge - You got it right'
+        title: ''
     });
 });
 
 router.post('/hooks/:hookid', function(req, res, next) {
     console.log("Received update from JIRA");
-    var hookId = req.params.hookid;
-    var webevent = req.body.webhookEvent;
+    const hookId = req.params.hookid;
+    const webevent = req.headers['x-webhook-type'] || req.body.webhookEvent;
 
     if (!req.body.issue) {
-        console.log("Event (type " + webevent + ") has no issue. Probably a buggy comment notification from https://jira.atlassian.com/browse/JRASERVER-59980");
+        console.log(`Event (type ${webevent}) has no issue. Probably a buggy comment notification from https://jira.atlassian.com/browse/JRASERVER-59980`);
         if (req.body.comment.self) {
             console.log("...comment URL is " + req.body.comment.self);
         }
         return;
     }
 
-    var issueID = req.body.issue.key;
-    var issueRestUrl = req.body.issue.self;
-    var regExp = /(.*?)\/rest\/api\/.*/g;
-    var matches = regExp.exec(issueRestUrl);
-    var issueUrl = matches[1] + "/browse/" + issueID;
-    var summary = req.body.issue.fields.summary;
+    const matterUrl = req.query.matterurl;
 
-    var matterUrl = req.query.matterurl;
+    const issueID      = req.body.issue.key;
+    const issueRestUrl = req.body.issue.self;
+    const issueUrl     = new url.URL(`/browse/${issueID}`, issueRestUrl).toString();
+    const summary      = req.body.issue.fields.summary;
 
-    var displayName = req.body.user.displayName;
-    var avatar = req.body.user.avatarUrls["16x16"];
-    var changeLog = req.body.changelog;
-    var comment = req.body.comment;
+    const changeLog = req.body.changelog;
+    const comment   = req.body.comment;
+
+    const author = (comment || {}).author;
+    const user   = req.body.user || author || {};
+
+    const displayName = user.displayName;
+    const avatar      = user.avatarUrls["16x16"];
 
     var postContent;
 
-    if (webevent == "jira:issue_updated")
+    const constructHeader = (action) =>
+        `##### ${displayName} ${action} [${issueID}](${issueUrl}): ${summary}`;
+
+    if (webevent === "jira:issue_updated")
     {
-        postContent = "##### " + displayName + " updated [" + issueID + "](" + issueUrl + "): " + summary;
+        postContent = constructHeader('updated');
     }
-    else if(webevent == "jira:issue_created")
+    else if(webevent === "jira:issue_created")
     {
-        postContent = "##### " + displayName + " created [" + issueID + "](" + issueUrl + "): " + summary;
+        postContent = constructHeader('created');
+        postContent += "\r\n" + summarizeIssue(req.body.issue)
     }
-    else if(webevent == "jira:issue_deleted")
+    else if(webevent === "jira:issue_deleted")
     {
-        postContent = "##### " + displayName + " deleted [" + issueID + "](" + issueUrl + "): " + summary;
+        postContent = constructHeader('deleted');
+    }
+    else if(webevent === "comment_created")
+    {
+        postContent = constructHeader('commented on');
     }
     else
     {
@@ -193,30 +244,22 @@ router.post('/hooks/:hookid', function(req, res, next) {
 
     if(changeLog)
     {
-        var changedItems = req.body.changelog.items;
+        let changedItems = req.body.changelog.items;
+        let tableData = toTable(changedItems);
 
-        postContent += "\r\n| Field | Updated Value |\r\n|:----- |:-------------|\r\n";
-
-        for (i = 0; i < changedItems.length; i++) {
-            var item = changedItems[i];
-            var fieldName = item.field;
-            var fieldValue = item.toString;
-            if(!fieldValue){
-                fieldValue = "-Cleared-";
-            }
-            postContent += "| " + toTitleCase(doConversion(fieldName)) + " | " + doConversion(fieldValue) + " |\r\n";
-        }
+        postContent += `\r\n${tableData}`;
     }
 
     if(comment)
     {
-        postContent += "\r\n##### Comment:\r\n" + doConversion(comment.body);
+        let commentData = summarizeString(comment.body, 300);
+        postContent += "\r\n##### Comment:\r\n" + toMarkdown(commentData);
     }
 
     postToServer(postContent, hookId, matterUrl);
 
     res.render('index', {
-        title: 'JIRA Mattermost Bridge - beauty, posted to JIRA'
+        title: ''
     });
 });
 
