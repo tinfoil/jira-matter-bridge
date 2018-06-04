@@ -7,6 +7,39 @@ var url = require('url');
 var HttpsProxyAgent = require('https-proxy-agent');
 var HttpProxyAgent = require('http-proxy-agent');
 
+// const stdTTL = 240;
+// const cacheCheckPeriod = 60;
+
+const stdTTL = 240;
+const cacheCheckPeriod = 60;
+
+const NodeCache = require('node-cache');
+const recentUpdates = new NodeCache({
+    stdTTL: stdTTL,
+    checkperiod: cacheCheckPeriod
+});
+
+function recentlyUpdated(issueID) {
+    if (recentUpdates.get(issueID)) {
+        recentUpdates.ttl(issueID, stdTTL);
+        return true;
+    }
+    recentUpdates.set(issueID, true);
+    return false;
+}
+
+function isStatusTransition(changelog) {
+    if (!changelog) { return false; }
+    if (!changelog.items) { return false; }
+    var items = changelog.items;
+
+    if (Array.isArray(items)) {
+        let states = items.filter(t => t.field === "status" || t.field == "resolution");
+        return states.length > 0;
+    }
+    return false;
+}
+
 function toTitleCase(str) {
     return str.replace(/\w\S*/g, function(txt) {
         return txt.charAt(0).toUpperCase() + txt.substr(1).toLowerCase();
@@ -28,7 +61,7 @@ function toTable(items) {
 
     var tableData = items.map(item => {
         var fieldName = item.field;
-        var fieldValue = item.toString();
+        var fieldValue = item.toString;
         if (fieldValue) {
             fieldValue = summarizeString(fieldValue, 20);
         }
@@ -221,6 +254,15 @@ router.post('/hooks/:hookid', function(req, res, next) {
 
     if (webevent === "jira:issue_updated")
     {
+        if (recentlyUpdated(issueID)) {
+            // Always send updates on status transitions, but not others
+            if (!isStatusTransition(changeLog)) {
+                res.render('index', {
+                    title: ''
+                });
+                return;
+            }
+        }
         postContent = constructHeader('updated');
     }
     else if(webevent === "jira:issue_created")
