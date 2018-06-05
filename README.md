@@ -18,7 +18,7 @@ Set the following environment variables to provide the Mattermost server details
 ## Docker Version
 Pull the image from Docker Hub and run a container:
 ```sh
-docker run --rm -p 3000:3000 vrenjith/jira-matter-bridge
+docker run --rm -p 3000:3000 tinfoil/jira-matter-bridge
 ```
 See also the example docker-compose.yml.
 
